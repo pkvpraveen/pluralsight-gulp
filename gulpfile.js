@@ -1,10 +1,21 @@
 var gulp = require('gulp');
 var args = require('yargs').argv;
 var browserSync = require('browser-sync');
-var config = require('./gulp.config');
+var config = require('./gulp.config')();
 var del = require('del');
 var $ = require('gulp-load-plugins')({lazy: true});
 var port = process.env.port || config.defaultPort;
+var _ = require('lodash');
+var path = require('path');
+
+/**
+ * Bump the version
+ * --type=pre will bump the pre release version*.*.*-x
+ * --type=patch or no flag will bump the patch version *.*.x
+ * --type=minor will bump the minor version *.x.*
+ * --type=major will bump the major version x.*.*
+ * --version=1.2.3 will bump to a specific version and ignore other flags
+ * */
 
 gulp.task('bump', function () {
     var msg = 'Bumping versions';
@@ -61,7 +72,7 @@ gulp.task('help', $.taskListing);
 gulp.task('images', ['clean-images'], function () {
     log(' Copying and compressing images');
     return gulp.src(config.images)
-        .pipe($.imagemin({optimizationLevel: 4}))
+        //.pipe($.imagemin({optimizationLevel: 4}))
         .pipe(gulp.dest(config.build + 'images'));
 });
 
@@ -72,7 +83,19 @@ gulp.task('inject', ['wiredep', 'styles', 'templatecache'], function () {
         .pipe(gulp.dest(config.client));
 });
 
-gulp.task('optimize', ['inject', 'fonts', 'images'], function () {
+gulp.task('build', ['optimize', 'fonts', 'images'], function () {
+    log('building everything...');
+    var msg = {
+        title: 'gulp build',
+        subTitle: 'Deployed to build folder',
+        message: 'Running gulp serve-build'
+    };
+    del(config.temp);
+    log(msg);
+    notify(msg);
+});
+
+gulp.task('optimize', ['inject', 'test'], function () {
     log('Optimizing html, js and css');
     var templateCache = config.temp + config.templateCache.file;
     var assets = $.useref.assets({searchPath: './'});
@@ -161,17 +184,88 @@ gulp.task('less-watcher', function () {
 });
 
 gulp.task('serve-dev', ['inject'], function () {
-    serve(true);
+    serve(true/* isDev */);
 });
 
-gulp.task('serve-build', ['optimize'], function () {
-    serve(false);
+gulp.task('serve-build', ['build'], function () {
+    serve(false/* isDev */);
+});
+
+gulp.task('test', ['vet', 'templatecache'], function (done) {
+    startTests(true/* singleRun */, done);
+});
+
+gulp.task('autotest', ['vet', 'templatecache'], function (done) {
+    startTests(false/* singleRun */, done);
+});
+
+gulp.task('serve-specs', ['build-specs'], function () {
+    log('Running the spec Runner');
+    serve(true /* isDev*/, true /* specRunner*/);
+});
+
+gulp.task('build-specs', ['templatecache'], function () {
+    log('Building the spec runner...');
+    var wiredep = require('wiredep').stream;
+    var options = config.getWiredepDefaultOptions();
+    var specs = config.specs;
+    options.devDependencies = true;
+
+    if (args.startServers) {
+        specs = [].concat(specs, config.serverIntegrationSpecs)
+    }
+    return gulp
+        .src(config.specRunner)
+        .pipe(wiredep(options))
+        .pipe($.inject(gulp.src(config.testLibraries), {name: 'inject:testlibraries', read: false}))
+        .pipe($.inject(gulp.src(config.js)))
+        .pipe($.inject(gulp.src(config.specHelpers), {name: 'inject:spechelpers', read: false}))
+        .pipe($.inject(gulp.src(specs), {name: 'inject:specs', read: false}))
+        .pipe($.inject(gulp.src(config.temp + config.templateCache.file), {name: 'inject:templates', read: false}))
+        .pipe(gulp.dest(config.client));
 });
 
 gulp.task('default', ['help']);
 
 ////////////////////
-function serve(isDev) {
+
+function startTests(singleRun, done) {
+    var child;
+    var fork = require('child_process').fork;
+    var karma = require('karma').server;
+    var excludeFiles = [];
+    if (args.startServers) {
+        log('starting server...');
+        var savedEnv = process.env;
+        savedEnv.NODE_ENV = 'dev';
+        savedEnv.PORT = 8888;
+        child = fork(config.nodeServer);
+    } else {
+        if (config.serverIntegrationSpecs && config.serverIntegrationSpecs.length) {
+            excludeFiles = config.serverIntegrationSpecs;
+        }
+    }
+    karma.start({
+        configFile: __dirname + '/karma.conf.js',
+        exclude: excludeFiles,
+        singleRun: !!singleRun
+    }, karmaCompleted);
+
+    function karmaCompleted(karmaResult) {
+        log('Karma Completed');
+        if (child) {
+            log('Shutting down the child process...');
+            child.kill();
+        }
+        if (karmaResult === 1) {
+            done('karma : tests failed with code ' + karmaResult);
+        } else {
+            done();
+        }
+    }
+}
+
+function serve(isDev, specRunner) {
     var nodeOptions = {
         script: config.nodeServer,
         delayTime: 1,
@@ -193,7 +287,7 @@ function serve(isDev) {
         })
         .on('start', function () {
             log('node started');
-            startBrowserSync(isDev);
+            startBrowserSync(isDev, specRunner);
         })
         .on('crash', function () {
             log('node crashed');
@@ -208,7 +302,18 @@ function changeEvent(event) {
     log('File: ' + event.path.replace(srcPattern, '') + ' ' + event.type);
 }
 
-function startBrowserSync(isDev) {
+function notify(options) {
+    var notifier = require('node-notifier');
+    var notifyOptions = {
+        sound: 'Bottle',
+        contentImage: path.join(__dirname, 'gulp.png'),
+        icon: path.join(__dirname, 'gulp.png')
+    };
+    _.assign(notifyOptions, options);
+    notifier.notify(notifyOptions);
+}
+
+function startBrowserSync(isDev, specRunner) {
     if (args.nosync || browserSync.active) {
         log('browser sync is already active');
         return;
@@ -248,6 +353,9 @@ function startBrowserSync(isDev) {
         notify: true,
         reloadDelay: 0
     };
+    if (specRunner) {
+        options.startPath = config.specRunnerFile;
+    }
     browserSync(options);
 
 }
@@ -261,10 +369,10 @@ function log(msg) {
     if (typeof(msg) === Object) {
         for (var item in msg) {
             if (msg.hasOwnProperty(item)) {
-                $.util.log($.util.colors.blue(msg[item]));
+                $.util.log($.util.colors.green(msg[item]));
             }
         }
     } else {
-        $.util.log($.util.colors.blue(msg));
+        $.util.log($.util.colors.green(msg));
     }
 }
