@@ -1,31 +1,33 @@
 module.exports = (function () {
+    var build = './build/';
     var client = './src/client/';
     var clientApp = client + 'app/';
-    var temp = './.tmp/';
+    var root = './';
     var server = './src/server/';
-    var build = './build/';
-    var root ='./';
+    var temp = './.tmp/';
     return {
-        //file paths
-        client: client,
-        index: client + 'index.html',
-        htmlTemplates: clientApp + '**/*.html',
-        less: client + 'styles/styles.less',
+        /**
+         *   File paths
+         * */
         alljs: ['./src/**/*.js',
             './*.js'],
+        build: build,
+        client: client,
+        css: temp + 'styles.css',
+        fonts: './bower_components/font-awesome/fonts/**/*.*',
+        index: client + 'index.html',
+        html: clientApp + '**/*.html',
+        htmlTemplates: clientApp + '**/*.html',
+        images: client + 'images/**/*.*',
         js: [
             clientApp + '**/*.module.js',
             clientApp + '**/*.js',
             '!' + clientApp + '**/*.spec.js'
         ],
-        html: clientApp + '**/*.html',
-        css: temp + 'styles.css',
+        less: client + 'styles/styles.less',
+        root: root,
         server: server,
         temp: temp,
-        build: build,
-        fonts: './bower_components/font-awesome/fonts/**/*.*',
-        images: client + 'images/**/*.*',
-        root:root,
         /**
          * Template Cache
          */
@@ -38,7 +40,11 @@ module.exports = (function () {
             }
         },
 
-        packages: ['./package.json','./bower.json'],
+        /**
+         * Package paths for bump
+         */
+
+        packages: ['./package.json', './bower.json'],
 
         /**
          *  browser sync
